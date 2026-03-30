@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 4 - Fixed report list click to use link inside row
+Version 5 - Fixed Inspections page filter handling
 """
 
 import asyncio
@@ -83,71 +83,72 @@ async def run():
         await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
 
-        # Print all links on the listing page to find the right one
         links = page.locator("table a")
         link_count = await links.count()
         print(f"  Found {link_count} links in report table")
 
         if link_count > 0:
-            # Click the very first link in the table (most recent report)
             first_link_href = await links.first.get_attribute("href")
-            print(f"  -> First report link: {first_link_href}")
+            print(f"  -> Clicking first report link: {first_link_href}")
             await links.first.click()
             await page.wait_for_timeout(NAV_WAIT)
             print(f"  -> Now on: {page.url}")
-        else:
-            # Fallback: navigate directly using the display URL pattern
-            print("  No links found - trying direct navigation...")
-            await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
-            await page.wait_for_timeout(5000)
-            # Try clicking any clickable element in the first data row
-            first_row_link = page.locator("table tbody tr").first.locator("a, td[onclick]")
-            if await first_row_link.count() > 0:
-                await first_row_link.first.click()
-                await page.wait_for_timeout(NAV_WAIT)
 
-        # Now look for Download CSV button
         print("  -> Looking for Download CSV button...")
         csv_btn = page.locator("input[value='Download CSV']")
-        btn_count = await csv_btn.count()
-        print(f"  Found {btn_count} Download CSV buttons")
+        print(f"  Found {await csv_btn.count()} Download CSV buttons")
 
-        if btn_count > 0:
-            print("  -> Downloading completed orders CSV...")
-            async with page.expect_download(timeout=60000) as dl:
-                await csv_btn.first.click()
-            download = await dl.value
-            await download.save_as(COMPLETED_FILE)
-            print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
-        else:
-            print(f"  ERROR: No Download CSV button found on {page.url}")
-            # Print page content for debugging
-            content = await page.content()
-            print(f"  Page snippet: {content[:500]}")
+        async with page.expect_download(timeout=60000) as dl:
+            await csv_btn.first.click()
+        download = await dl.value
+        await download.save_as(COMPLETED_FILE)
+        print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
 
         # ── STEP 5: Open Orders ─────────────────────────────────────
         print("  -> Going to Inspections page...")
         await page.goto(INSP_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
-        print(f"  -> Inspections: {await page.title()}")
+        print(f"  -> Inspections loaded: {await page.title()}")
 
-        # Find Inspector dropdown and set to All
-        selects = page.locator("select")
-        sel_count = await selects.count()
-        print(f"  Found {sel_count} dropdowns")
+        # Print ALL inputs on the page to find the inspector filter
+        inputs = page.locator("input[type='text'], input[type='search']")
+        inp_count = await inputs.count()
+        print(f"  Found {inp_count} text inputs on Inspections page")
+        for i in range(inp_count):
+            val = await inputs.nth(i).get_attribute("value") or ""
+            name = await inputs.nth(i).get_attribute("name") or ""
+            print(f"  Input {i}: name={name} value={val}")
 
-        for i in range(sel_count):
-            inner = await selects.nth(i).inner_text()
-            print(f"  Dropdown {i}: {inner[:80]}")
-            if "ASOFFICE" in inner:
-                await selects.nth(i).select_option(index=0)
-                print(f"  OK Set dropdown {i} to All")
-                await page.wait_for_timeout(8000)
+        # The inspector filter is a TEXT input in the filter row
+        # From the screenshot we saw "ASOFFICE" typed in an input field
+        # Find it by looking for input containing ASOFFICE or named inspector
+        inspector_input = None
+        for i in range(inp_count):
+            val = await inputs.nth(i).get_attribute("value") or ""
+            name = await inputs.nth(i).get_attribute("name") or ""
+            if "ASOFFICE" in val.upper() or "inspec" in name.lower() or "perf" in name.lower():
+                inspector_input = inputs.nth(i)
+                print(f"  -> Found inspector input at index {i}: name={name} value={val}")
                 break
 
+        if inspector_input:
+            # Clear the inspector field so it shows ALL inspectors
+            await inspector_input.triple_click()
+            await inspector_input.fill("")
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(8000)
+            print("  OK Cleared inspector filter - showing all inspectors")
+        else:
+            print("  WARNING: Inspector input not found - downloading as-is")
+
+        # Click Filtered List to Excel
         print("  -> Clicking Filtered List to Excel...")
+        excel_btn = page.locator("input[value='Filtered List to Excel']")
+        btn_count = await excel_btn.count()
+        print(f"  Found {btn_count} Filtered List to Excel buttons")
+
         async with page.expect_download(timeout=60000) as dl:
-            await page.locator("input[value='Filtered List to Excel']").click()
+            await excel_btn.first.click()
         download = await dl.value
         await download.save_as(OPEN_ORDERS_FILE)
         print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
