@@ -1,0 +1,47 @@
+name: Daily Safeguard Report Pull
+
+on:
+  schedule:
+    # 6:00 AM Eastern Time = 11:00 AM UTC
+    - cron: '0 11 * * 1-5'   # Monday–Friday at 6 AM ET
+  workflow_dispatch:           # Also allows manual trigger anytime
+
+jobs:
+  pull-reports:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Check out the repository
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # 2. Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: |
+          pip install playwright openpyxl
+          playwright install chromium
+          playwright install-deps chromium
+
+      # 4. Run the automation script
+      - name: Pull Safeguard reports
+        env:
+          SAFEGUARD_VENDOR_CODE: ${{ secrets.SAFEGUARD_VENDOR_CODE }}
+          SAFEGUARD_PASSWORD: ${{ secrets.SAFEGUARD_PASSWORD }}
+        run: python scraper.py
+
+      # 5. Save the downloaded files back to the repo
+      - name: Commit and push downloaded reports
+        run: |
+          git config user.name  "Safeguard Bot"
+          git config user.email "bot@safeguard-automation"
+          git add data/
+          git diff --staged --quiet || git commit -m "Daily report update - $(date +'%Y-%m-%d')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
