@@ -7,7 +7,6 @@ Pulls: 1) Completed Orders (Invoice Summary 30 Days)
 
 import asyncio
 import os
-import time
 from datetime import datetime
 from playwright.async_api import async_playwright
 
@@ -23,10 +22,10 @@ LISTING_URL = f"{BASE_URL}/reports/listing.php"
 INSP_URL    = f"{BASE_URL}/inspsvc/main.php"
 
 # ─── OUTPUT PATHS ───
-OUTPUT_DIR         = "data"
-COMPLETED_FILE     = f"{OUTPUT_DIR}/completed_orders.csv"
-OPEN_ORDERS_FILE   = f"{OUTPUT_DIR}/open_orders.xlsx"
-LAST_UPDATED_FILE  = f"{OUTPUT_DIR}/last_updated.txt"
+OUTPUT_DIR       = "data"
+COMPLETED_FILE   = f"{OUTPUT_DIR}/completed_orders.csv"
+OPEN_ORDERS_FILE = f"{OUTPUT_DIR}/open_orders.xlsx"
+LAST_UPDATED     = f"{OUTPUT_DIR}/last_updated.txt"
 
 
 async def run():
@@ -40,77 +39,87 @@ async def run():
         page    = await context.new_page()
 
         # ── STEP 1: Login ──────────────────────────────────────────
-        print("  → Logging in...")
-        await page.goto(LOGIN_URL)
-        await page.fill('input[name="VendorCode"]', VENDOR_CODE)
-        await page.fill('input[name="Password"]',   PASSWORD)
-        await page.click('input[type="submit"]')
+        print("  -> Logging in...")
+        await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        await page.wait_for_timeout(3000)
+
+        # Fill vendor code - first text input on the page
+        await page.locator("input[type='text']").first.fill(VENDOR_CODE)
+        await page.wait_for_timeout(500)
+
+        # Fill password
+        await page.locator("input[type='password']").first.fill(PASSWORD)
+        await page.wait_for_timeout(500)
+
+        # Click Login
+        await page.locator("input[type='submit']").first.click()
         await page.wait_for_load_state("networkidle")
-        print("  ✓ Logged in")
+        await page.wait_for_timeout(3000)
+        print(f"  OK Logged in - URL: {page.url}")
 
         # ── STEP 2: Close popup if present ─────────────────────────
         try:
-            close_btn = page.locator('input[value="Close"], button:has-text("Close")')
+            close_btn = page.locator("input[value='Close']")
             if await close_btn.count() > 0:
                 await close_btn.first.click()
                 await page.wait_for_load_state("networkidle")
-                print("  ✓ Closed popup")
+                print("  OK Closed popup")
         except Exception:
-            pass  # No popup, continue
+            print("  No popup, continuing...")
 
         # ── STEP 3: Request Completed Orders report ─────────────────
-        print("  → Requesting completed orders report...")
-        await page.goto(REPORTS_URL)
+        print("  -> Requesting completed orders report...")
+        await page.goto(REPORTS_URL, wait_until="domcontentloaded")
+        await page.wait_for_timeout(2000)
+        await page.get_by_text("New Invoice Summary 30 Days", exact=True).first.click()
         await page.wait_for_load_state("networkidle")
-        await page.click('text="New Invoice Summary 30 Days"')
+        print("  OK Report requested - waiting 75 seconds...")
+        await asyncio.sleep(75)
+
+        # ── STEP 4: Report List and download ───────────────────────
+        print("  -> Going to Report List...")
+        await page.goto(LISTING_URL, wait_until="domcontentloaded")
+        await page.wait_for_timeout(2000)
+        await page.locator("table tr").nth(1).click()
         await page.wait_for_load_state("networkidle")
-        print("  ✓ Report requested — waiting for it to generate...")
+        await page.wait_for_timeout(1000)
 
-        # Wait up to 90 seconds for report to generate
-        await asyncio.sleep(60)
-
-        # ── STEP 4: Go to Report List and download ──────────────────
-        print("  → Going to Report List...")
-        await page.goto(LISTING_URL)
-        await page.wait_for_load_state("networkidle")
-
-        # Click the first (most recent) report in the list
-        first_report = page.locator("table tr").nth(1).locator("a, td")
-        await first_report.first.click()
-        await page.wait_for_load_state("networkidle")
-
-        # Click Download CSV
-        print("  → Downloading completed orders CSV...")
-        async with page.expect_download() as download_info:
-            await page.click('input[value="Download CSV"], button:has-text("Download CSV")')
-        download = await download_info.value
+        print("  -> Downloading completed orders CSV...")
+        async with page.expect_download(timeout=30000) as dl:
+            await page.locator("input[value='Download CSV']").click()
+        download = await dl.value
         await download.save_as(COMPLETED_FILE)
-        print(f"  ✓ Completed orders saved → {COMPLETED_FILE}")
+        print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
 
-        # ── STEP 5: Open Orders with Due Dates ─────────────────────
-        print("  → Pulling open orders with due dates...")
-        await page.goto(INSP_URL)
-        await page.wait_for_load_state("networkidle")
+        # ── STEP 5: Open Orders ─────────────────────────────────────
+        print("  -> Pulling open orders with due dates...")
+        await page.goto(INSP_URL, wait_until="domcontentloaded")
+        await page.wait_for_timeout(3000)
 
-        # Change Inspector dropdown from ASOFFICE to All
-        await page.select_option('select[name*="nspec"], select', label="All")
-        await page.wait_for_load_state("networkidle")
-        await asyncio.sleep(2)  # Let the filter apply
+        # Find and change Inspector dropdown to All
+        selects = page.locator("select")
+        sel_count = await selects.count()
+        for i in range(sel_count):
+            inner = await selects.nth(i).inner_text()
+            if "ASOFFICE" in inner:
+                await selects.nth(i).select_option(index=0)
+                print("  OK Changed inspector to All")
+                break
+        await page.wait_for_timeout(3000)
 
-        # Click Filtered List to Excel
-        print("  → Downloading open orders Excel...")
-        async with page.expect_download() as download_info:
-            await page.click('input[value="Filtered List to Excel"], button:has-text("Filtered List to Excel")')
-        download = await download_info.value
+        print("  -> Downloading open orders Excel...")
+        async with page.expect_download(timeout=30000) as dl:
+            await page.locator("input[value='Filtered List to Excel']").click()
+        download = await dl.value
         await download.save_as(OPEN_ORDERS_FILE)
-        print(f"  ✓ Open orders saved → {OPEN_ORDERS_FILE}")
+        print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
 
-        # ── STEP 6: Write last updated timestamp ───────────────────
-        with open(LAST_UPDATED_FILE, "w") as f:
+        # ── STEP 6: Timestamp ───────────────────────────────────────
+        with open(LAST_UPDATED, "w") as f:
             f.write(today)
 
         await browser.close()
-        print(f"\n✅ All done! Both reports downloaded at {today}")
+        print(f"\nDONE! Both reports downloaded at {today}")
 
 
 if __name__ == "__main__":
