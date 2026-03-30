@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 3 - Built for slow site with extended timeouts throughout
+Version 4 - Fixed report list click to use link inside row
 """
 
 import asyncio
@@ -22,10 +22,9 @@ COMPLETED_FILE   = f"{OUTPUT_DIR}/completed_orders.csv"
 OPEN_ORDERS_FILE = f"{OUTPUT_DIR}/open_orders.xlsx"
 LAST_UPDATED     = f"{OUTPUT_DIR}/last_updated.txt"
 
-# How long to wait for slow pages (ms)
-PAGE_TIMEOUT = 120000   # 2 minutes per page load
-CLICK_WAIT   = 5000     # 5 seconds after every click
-NAV_WAIT     = 8000     # 8 seconds after navigation
+PAGE_TIMEOUT = 120000
+NAV_WAIT     = 8000
+CLICK_WAIT   = 5000
 
 
 async def run():
@@ -43,12 +42,10 @@ async def run():
         page.set_default_timeout(PAGE_TIMEOUT)
 
         # ── STEP 1: Login ──────────────────────────────────────────
-        print("  -> Loading login page (slow site - please wait)...")
+        print("  -> Loading login page...")
         await page.goto(LOGIN_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
-        print(f"  -> Page loaded: {await page.title()}")
 
-        print("  -> Entering credentials...")
         await page.locator("input[type='text']").first.fill(VENDOR_CODE)
         await page.wait_for_timeout(1000)
         await page.locator("input[type='password']").first.fill(PASSWORD)
@@ -56,20 +53,10 @@ async def run():
 
         print("  -> Clicking Login...")
         await page.locator("input[type='submit']").first.click()
-
-        # Wait generously for slow redirect
-        print("  -> Waiting for site to redirect after login...")
         await page.wait_for_timeout(10000)
         print(f"  -> URL after login: {page.url}")
 
-        # If still on login page, wait more
-        if "login" in page.url:
-            print("  -> Still on login page, waiting longer...")
-            await page.wait_for_timeout(10000)
-            print(f"  -> URL now: {page.url}")
-
         # ── STEP 2: Close popup ────────────────────────────────────
-        print("  -> Checking for appointment popup...")
         await page.wait_for_timeout(5000)
         try:
             close_btn = page.locator("input[value='Close']")
@@ -77,67 +64,86 @@ async def run():
                 await close_btn.first.click()
                 await page.wait_for_timeout(CLICK_WAIT)
                 print("  OK Popup closed")
-            else:
-                print("  No popup found")
-        except Exception as e:
-            print(f"  Popup: {e}")
+        except Exception:
+            print("  No popup found")
 
         # ── STEP 3: Request Completed Orders Report ─────────────────
-        print("  -> Navigating to Reports page...")
+        print("  -> Going to Reports page...")
         await page.goto(REPORTS_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
-        print(f"  -> Reports page: {await page.title()}")
 
         print("  -> Clicking New Invoice Summary 30 Days...")
         await page.get_by_text("New Invoice Summary 30 Days", exact=True).first.click()
         await page.wait_for_timeout(CLICK_WAIT)
-        print("  OK Report requested!")
-        print("  -> Waiting 90 seconds for report to generate on slow server...")
+        print("  OK Report requested - waiting 90 seconds...")
         await asyncio.sleep(90)
-        print("  -> Done waiting, heading to Report List...")
 
         # ── STEP 4: Download Completed Orders ──────────────────────
+        print("  -> Going to Report List...")
         await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
-        print(f"  -> Report List loaded: {await page.title()}")
 
-        print("  -> Clicking first report in list...")
-        await page.locator("table tr").nth(1).click()
-        await page.wait_for_timeout(CLICK_WAIT)
-        print(f"  -> Download page: {page.url}")
+        # Print all links on the listing page to find the right one
+        links = page.locator("table a")
+        link_count = await links.count()
+        print(f"  Found {link_count} links in report table")
 
-        print("  -> Clicking Download CSV...")
-        async with page.expect_download(timeout=60000) as dl:
-            await page.locator("input[value='Download CSV']").click()
-        download = await dl.value
-        await download.save_as(COMPLETED_FILE)
-        print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
+        if link_count > 0:
+            # Click the very first link in the table (most recent report)
+            first_link_href = await links.first.get_attribute("href")
+            print(f"  -> First report link: {first_link_href}")
+            await links.first.click()
+            await page.wait_for_timeout(NAV_WAIT)
+            print(f"  -> Now on: {page.url}")
+        else:
+            # Fallback: navigate directly using the display URL pattern
+            print("  No links found - trying direct navigation...")
+            await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
+            await page.wait_for_timeout(5000)
+            # Try clicking any clickable element in the first data row
+            first_row_link = page.locator("table tbody tr").first.locator("a, td[onclick]")
+            if await first_row_link.count() > 0:
+                await first_row_link.first.click()
+                await page.wait_for_timeout(NAV_WAIT)
 
-        # ── STEP 5: Open Orders with Due Dates ─────────────────────
-        print("  -> Navigating to Inspections page...")
+        # Now look for Download CSV button
+        print("  -> Looking for Download CSV button...")
+        csv_btn = page.locator("input[value='Download CSV']")
+        btn_count = await csv_btn.count()
+        print(f"  Found {btn_count} Download CSV buttons")
+
+        if btn_count > 0:
+            print("  -> Downloading completed orders CSV...")
+            async with page.expect_download(timeout=60000) as dl:
+                await csv_btn.first.click()
+            download = await dl.value
+            await download.save_as(COMPLETED_FILE)
+            print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
+        else:
+            print(f"  ERROR: No Download CSV button found on {page.url}")
+            # Print page content for debugging
+            content = await page.content()
+            print(f"  Page snippet: {content[:500]}")
+
+        # ── STEP 5: Open Orders ─────────────────────────────────────
+        print("  -> Going to Inspections page...")
         await page.goto(INSP_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
-        print(f"  -> Inspections page: {await page.title()}")
+        print(f"  -> Inspections: {await page.title()}")
 
-        # Find and change Inspector dropdown to All
-        print("  -> Finding Inspector dropdown...")
+        # Find Inspector dropdown and set to All
         selects = page.locator("select")
         sel_count = await selects.count()
-        print(f"  Found {sel_count} dropdowns on page")
+        print(f"  Found {sel_count} dropdowns")
 
-        changed = False
         for i in range(sel_count):
             inner = await selects.nth(i).inner_text()
-            print(f"  Dropdown {i}: {inner[:100]}")
+            print(f"  Dropdown {i}: {inner[:80]}")
             if "ASOFFICE" in inner:
                 await selects.nth(i).select_option(index=0)
                 print(f"  OK Set dropdown {i} to All")
-                changed = True
-                await page.wait_for_timeout(8000)  # Wait for filter to apply
+                await page.wait_for_timeout(8000)
                 break
-
-        if not changed:
-            print("  WARNING: Inspector dropdown not found, proceeding anyway")
 
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
