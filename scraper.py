@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 7 - Fixed inspector dropdown handling with proper wait
+Version 8 - Fixed button selectors using actual HTML IDs
 """
 
 import asyncio
@@ -101,49 +101,33 @@ async def run():
         print("  -> Going to Inspections page...")
         await page.goto(INSP_URL, wait_until="load", timeout=PAGE_TIMEOUT)
 
-        # Wait for the Filtered List to Excel button to confirm page is ready
-        print("  -> Waiting for page to fully load...")
-        await page.wait_for_selector(
-            "input[value='Filtered List to Excel']",
-            timeout=60000
-        )
-        print("  OK Page fully loaded!")
+        # Wait for the button using its actual ID: btnFilteredExcel
+        print("  -> Waiting for Inspections page to fully load...")
+        await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
+        print("  OK Page fully loaded - btnFilteredExcel found!")
 
-        # Now find ALL select dropdowns and log every one
+        # Find and change the Inspector dropdown
+        # The form posts to inspection-list-service.php
+        # Inspector filter is a select in the filter row
         selects = page.locator("select")
         sel_count = await selects.count()
-        print(f"  Found {sel_count} dropdowns on Inspections page")
+        print(f"  Found {sel_count} dropdowns")
 
         for i in range(sel_count):
-            # Get all options in this dropdown
             options = await selects.nth(i).locator("option").all_inner_texts()
             selected = await selects.nth(i).input_value()
-            print(f"  Dropdown {i}: selected={selected} options={options[:5]}")
-
-            # Look for the one containing ASOFFICE as selected value
-            if "ASOFFICE" in selected.upper():
-                print(f"  -> Found Inspector dropdown at index {i} - changing to All")
-                # Select the first option (All / blank)
+            print(f"  Dropdown {i}: selected='{selected}' options={options[:6]}")
+            if "ASOFFICE" in selected.upper() or any("ASOFFICE" in o.upper() for o in options):
+                print(f"  -> Changing Inspector dropdown {i} to All...")
                 await selects.nth(i).select_option(index=0)
-                selected_after = await selects.nth(i).input_value()
-                print(f"  -> Dropdown now set to: {selected_after}")
                 await page.wait_for_timeout(8000)
+                print("  OK Inspector set to All")
                 break
 
-            # Also check if any option contains ASOFFICE
-            all_opts = await selects.nth(i).locator("option").all_inner_texts()
-            if any("ASOFFICE" in opt.upper() for opt in all_opts):
-                print(f"  -> Inspector dropdown found at index {i} - changing to All")
-                await selects.nth(i).select_option(index=0)
-                selected_after = await selects.nth(i).input_value()
-                print(f"  -> Dropdown now set to: {selected_after}")
-                await page.wait_for_timeout(8000)
-                break
-
-        # Download open orders
-        print("  -> Clicking Filtered List to Excel...")
+        # Click Filtered List to Excel using the button ID
+        print("  -> Clicking Filtered List to Excel (btnFilteredExcel)...")
         async with page.expect_download(timeout=60000) as dl:
-            await page.locator("input[value='Filtered List to Excel']").first.click()
+            await page.locator("#btnFilteredExcel").click()
         download = await dl.value
         await download.save_as(OPEN_ORDERS_FILE)
         print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
