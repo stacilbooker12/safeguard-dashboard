@@ -133,46 +133,29 @@ async def run():
         print("  OK Inspections page fully loaded!")
 
         # The Inspector filter is a Tabulator search input — clear it to show all inspectors
-        print("  -> Clearing Inspector search filter using Tabulator input...")
-        
+       print("  -> Inspecting page for Tabulator instance and form...")
         result = await page.evaluate("""
             () => {
-                // Find all tabulator header filter inputs
-                const filters = document.querySelectorAll('.tabulator-header-filter input');
-                let found = false;
-                filters.forEach((inp, i) => {
-                    console.log('Filter ' + i + ': value=' + inp.value + ' placeholder=' + inp.placeholder);
-                    if (inp.value.toUpperCase().includes('ASOFFICE') || inp.value === 'ASOFFICE') {
-                        inp.value = '';
-                        inp.dispatchEvent(new Event('input', { bubbles: true }));
-                        inp.dispatchEvent(new Event('change', { bubbles: true }));
-                        inp.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-                        found = true;
-                        return 'Cleared filter at index ' + i;
-                    }
-                });
-                if (!found) {
-                    // Try clearing ALL filter inputs to show everything
-                    let count = 0;
-                    filters.forEach(inp => {
-                        if (inp.value) {
-                            inp.value = '';
-                            inp.dispatchEvent(new Event('input', { bubbles: true }));
-                            inp.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-                            count++;
-                        }
-                    });
-                    return 'Cleared ' + count + ' filters. Total filters: ' + filters.length;
+                const info = {};
+                const form = document.getElementById('excelPost');
+                if (form) {
+                    info.formAction = form.action;
+                    info.formInputs = Array.from(form.querySelectorAll('input')).map(i => i.name + '=' + i.value);
                 }
-                return 'Done';
+                const tabulatorKeys = Object.keys(window).filter(k => {
+                    try { return window[k] && window[k].rowManager && typeof window[k].clearFilter === 'function'; } 
+                    catch(e) { return false; }
+                });
+                info.tabulatorVars = tabulatorKeys;
+                if (tabulatorKeys.length > 0) {
+                    window[tabulatorKeys[0]].clearFilter(true);
+                    info.clearedVia = tabulatorKeys[0];
+                }
+                return JSON.stringify(info);
             }
         """)
-        print(f"  -> JS result: {result}")
-        
-        # Wait for Tabulator to refilter the data
-        await page.wait_for_timeout(10000)
-        print("  OK Filter cleared, data should show all inspectors")
-
+        print(f"  -> Page info: {result}")
+        await page.wait_for_timeout(8000)
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFilteredExcel").click()
