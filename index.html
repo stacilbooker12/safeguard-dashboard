@@ -47,7 +47,6 @@
   .bar-fill { height: 100%; border-radius: 3px; }
   .chart-wrap { position: relative; width: 100%; height: 300px; }
   .msg { text-align: center; padding: 3rem; color: #73726c; font-size: 14px; }
-  .debug { background: #f0efe8; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 12px; color: #73726c; font-family: monospace; line-height: 1.6; }
   @media (max-width: 700px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -68,7 +67,7 @@
     <div class="mcard"><div class="mlabel">Open orders</div><div class="mval" id="m4">—</div><div class="msub" id="m4s">—</div></div>
   </div>
 
-  <div id="debug-info" class="debug"></div>
+  
 
   <div class="card">
     <div class="toolbar">
@@ -97,7 +96,7 @@ let allData=[],view='table',filter='ALL',sortK='r30',sortD=-1,chartInst=null;
 const STATES={OH:['OHASB06','OHASB21','OHASB00'],IN:['INASB11','INASB463','INASB465'],NC:['NCASB280'],WV:['WVASB06','WVASB02A','WVASB02','WVASB04','WVASB02B','WVASB000'],PA:['PAASB20','PAASB156','PAASB151'],IL:['ILASB01']};
 function getState(id){for(const[s,ids]of Object.entries(STATES)){if(ids.some(x=>x.toUpperCase()===id.toUpperCase()))return s;}const m=id.match(/^([A-Z]{2})/);return m?m[1]:'??';}
 function setStatus(msg,type){document.getElementById('stxt').textContent=msg;document.getElementById('sdot').className='dot dot-'+(type||'loading');}
-function setDebug(msg){document.getElementById('debug-info').innerHTML=msg;}
+function setDebug(msg){}
 
 function parseDate(s){
   if(!s&&s!==0)return null;
