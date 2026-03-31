@@ -233,7 +233,7 @@ function process(csv,xbuf,mbuf){
   document.getElementById('m3').textContent=validRows.filter(r=>r._ts>=d7Ts).length.toLocaleString();
   document.getElementById('m4').textContent=openRows.length.toLocaleString();
 
-  const oDueCol=oKeys.find(k=>/due/i.test(k))||null;
+  const oDueCol=oKeys.find(k=>k==='DUEDATE')||oKeys.find(k=>/due/i.test(k))||null;
   const overdue=oDueCol?openRows.filter(r=>{const d=parseDate((r[oDueCol]||'').toString());return d&&midnight(d)<nowTs;}).length:0;
   document.getElementById('m4s').textContent=overdue>0?overdue+' overdue':'All on track';
 
