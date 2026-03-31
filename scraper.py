@@ -132,51 +132,46 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Use JavaScript to directly set the inspector dropdown to All and trigger reload
-        print("  -> Using JavaScript to find and change Inspector dropdown...")
+        # The Inspector filter is a Tabulator search input — clear it to show all inspectors
+        print("  -> Clearing Inspector search filter using Tabulator input...")
         
-        # Print all select elements and their options via JS for debugging
-        select_info = await page.evaluate("""
+        result = await page.evaluate("""
             () => {
-                const selects = document.querySelectorAll('select');
-                return Array.from(selects).map((s, i) => ({
-                    index: i,
-                    id: s.id,
-                    name: s.name,
-                    value: s.value,
-                    options: Array.from(s.options).map(o => o.text + '=' + o.value).slice(0, 5)
-                }));
-            }
-        """)
-        for s in select_info:
-            print(f"  Select {s['index']}: id={s['id']} name={s['name']} value={s['value']} options={s['options'][:3]}")
-        
-        # Find inspector select by looking for one that has inspector-like options
-        changed = await page.evaluate("""
-            () => {
-                const selects = document.querySelectorAll('select');
-                for (let sel of selects) {
-                    const opts = Array.from(sel.options).map(o => o.text.toUpperCase());
-                    if (opts.some(o => o.includes('ASOFFICE') || o.includes('ALL') || o.includes('INSPECTOR'))) {
-                        // Set to first option (All)
-                        sel.selectedIndex = 0;
-                        sel.dispatchEvent(new Event('change', { bubbles: true }));
-                        return 'Changed: ' + sel.id + ' to ' + sel.options[0].text;
+                // Find all tabulator header filter inputs
+                const filters = document.querySelectorAll('.tabulator-header-filter input');
+                let found = false;
+                filters.forEach((inp, i) => {
+                    console.log('Filter ' + i + ': value=' + inp.value + ' placeholder=' + inp.placeholder);
+                    if (inp.value.toUpperCase().includes('ASOFFICE') || inp.value === 'ASOFFICE') {
+                        inp.value = '';
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                        inp.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                        found = true;
+                        return 'Cleared filter at index ' + i;
                     }
+                });
+                if (!found) {
+                    // Try clearing ALL filter inputs to show everything
+                    let count = 0;
+                    filters.forEach(inp => {
+                        if (inp.value) {
+                            inp.value = '';
+                            inp.dispatchEvent(new Event('input', { bubbles: true }));
+                            inp.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                            count++;
+                        }
+                    });
+                    return 'Cleared ' + count + ' filters. Total filters: ' + filters.length;
                 }
-                return 'Not found';
+                return 'Done';
             }
         """)
-        print(f"  -> JS result: {changed}")
+        print(f"  -> JS result: {result}")
         
-        # Wait for page to reload after change
-        try:
-            await page.wait_for_load_state("networkidle", timeout=30000)
-        except Exception:
-            pass
-        await page.wait_for_timeout(8000)
-        await page.wait_for_selector("#btnFilteredExcel", timeout=30000)
-        print("  OK Page reloaded, ready to download")
+        # Wait for Tabulator to refilter the data
+        await page.wait_for_timeout(10000)
+        print("  OK Filter cleared, data should show all inspectors")
 
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
