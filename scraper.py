@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 14 - Call getGridIDs(false) then submit form directly
+Version 15 - Wait for getGridIDs to async populate IDs field
 """
 
 import asyncio
@@ -112,40 +112,43 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Clear InspectionTabulator filter to show all inspectors
+        # Clear filter to show all inspectors
         print("  -> Clearing InspectionTabulator filter...")
         await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
         await page.wait_for_timeout(5000)
-
         row_count = await page.evaluate("() => window.InspectionTabulator.getDataCount()")
         print(f"  -> Row count after clear: {row_count}")
 
-        # Call getGridIDs(false) to populate the IDs field, then submit form
-        print("  -> Calling getGridIDs(false) to populate form IDs...")
+        # Call getGridIDs and poll until IDs field is populated
+        print("  -> Calling getGridIDs(false) and waiting for IDs to populate...")
         await page.evaluate("() => { getGridIDs(false); }")
-        await page.wait_for_timeout(3000)
-
-        # Check IDs are now populated
-        ids_info = await page.evaluate("""
-            () => {
-                const form = document.getElementById('excelPost');
-                if (!form) return 'no form';
-                const ids = form.querySelector('input[name="IDs"]');
-                if (!ids) return 'no IDs input';
-                return 'IDs length: ' + ids.value.length + ' | first 100: ' + ids.value.substring(0,100);
-            }
-        """)
-        print(f"  -> IDs after getGridIDs: {ids_info}")
-
-        # Submit the form directly
-        print("  -> Submitting excelPost form...")
-        async with page.expect_download(timeout=60000) as dl:
-            await page.evaluate("""
+        
+        ids_length = 0
+        for attempt in range(20):
+            await page.wait_for_timeout(2000)
+            ids_length = await page.evaluate("""
                 () => {
                     const form = document.getElementById('excelPost');
-                    form.submit();
+                    if (!form) return 0;
+                    const ids = form.querySelector('input[name="IDs"]');
+                    return ids ? ids.value.length : 0;
                 }
             """)
+            print(f"  -> Attempt {attempt+1}: IDs length = {ids_length}")
+            if ids_length > 0:
+                print(f"  OK IDs populated! Length: {ids_length}")
+                break
+            # Call getGridIDs again in case it needs re-triggering
+            if attempt % 3 == 2:
+                await page.evaluate("() => { getGridIDs(false); }")
+
+        if ids_length == 0:
+            print("  WARNING: IDs still empty — submitting anyway")
+
+        # Submit the form directly now that IDs should be populated
+        print("  -> Submitting excelPost form...")
+        async with page.expect_download(timeout=60000) as dl:
+            await page.evaluate("() => { document.getElementById('excelPost').submit(); }")
         download = await dl.value
         await download.save_as(OPEN_ORDERS_FILE)
         print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
