@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 12 - Clear filter, wait for rows to update, then click download
+Version 13 - Intercept form submission to see what IDs are sent
 """
 
 import asyncio
@@ -112,39 +112,56 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Check initial row count with ASOFFICE filter
-        initial_rows = await page.evaluate("""
+        # Check the button's onclick handler to understand how IDs are populated
+        btn_info = await page.evaluate("""
             () => {
-                if (window.InspectionTabulator) {
-                    return window.InspectionTabulator.getDataCount();
-                }
-                return -1;
+                const btn = document.getElementById('btnFilteredExcel');
+                if (!btn) return 'button not found';
+                return {
+                    onclick: btn.onclick ? btn.onclick.toString() : 'no onclick',
+                    outerHTML: btn.outerHTML,
+                    eventListeners: 'check source'
+                };
             }
         """)
-        print(f"  -> Initial row count (ASOFFICE only): {initial_rows}")
+        print(f"  -> Button info: {btn_info}")
 
-        # Clear InspectionTabulator filter
+        # Get the page source around btnFilteredExcel to find the click handler
+        source_snippet = await page.evaluate("""
+            () => {
+                // Look for the script that handles btnFilteredExcel
+                const scripts = document.querySelectorAll('script');
+                for (let s of scripts) {
+                    if (s.textContent.includes('btnFilteredExcel')) {
+                        // Return relevant portion
+                        const idx = s.textContent.indexOf('btnFilteredExcel');
+                        return s.textContent.substring(Math.max(0, idx-200), idx+500);
+                    }
+                }
+                return 'not found in scripts';
+            }
+        """)
+        print(f"  -> Script handler: {source_snippet[:500]}")
+
+        # Clear filter and wait for rows
         print("  -> Clearing InspectionTabulator filter...")
         await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
+        await page.wait_for_timeout(5000)
 
-        # Wait for row count to increase (more inspectors = more rows)
-        print("  -> Waiting for all inspector rows to load...")
-        for attempt in range(20):
-            await page.wait_for_timeout(3000)
-            current_rows = await page.evaluate("""
-                () => {
-                    if (window.InspectionTabulator) {
-                        return window.InspectionTabulator.getDataCount();
-                    }
-                    return -1;
-                }
-            """)
-            print(f"  -> Attempt {attempt+1}: {current_rows} rows (started with {initial_rows})")
-            if current_rows > initial_rows and current_rows > 0:
-                print(f"  OK All inspector rows loaded! ({current_rows} rows)")
-                break
+        row_count = await page.evaluate("() => window.InspectionTabulator.getDataCount()")
+        print(f"  -> Row count after clear: {row_count}")
 
-        # Click download - button handler will collect IDs from current visible rows
+        # Check IDs field right before clicking
+        ids_before = await page.evaluate("""
+            () => {
+                const form = document.getElementById('excelPost');
+                if (!form) return 'no form';
+                const ids = form.querySelector('input[name="IDs"]');
+                return ids ? 'IDs length: ' + ids.value.length + ' value start: ' + ids.value.substring(0,50) : 'no IDs input';
+            }
+        """)
+        print(f"  -> IDs before click: {ids_before}")
+
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFilteredExcel").click()
