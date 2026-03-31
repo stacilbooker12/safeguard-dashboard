@@ -122,9 +122,15 @@ async def run():
         all_ids = await page.evaluate("""
             () => {
                 const rows = window.InspectionTabulator.getData();
-                // Try different possible ID field names
-                const ids = rows.map(r => r.WORDER || r.worder || r.workorder || r.id || r.ID || Object.values(r)[1]);
-                return ids.filter(id => id).join(',');
+                if (rows.length === 0) return '';
+                // Print first row keys to find correct field name
+                const firstRow = rows[0];
+                const keys = Object.keys(firstRow);
+                console.log('Row keys:', keys.join(', '));
+                console.log('First row values:', Object.values(firstRow).slice(0,5).join(' | '));
+                // WORDER is the work order number field
+                const ids = rows.map(r => r.WORDER || r.worder || r.WOrder || r.workOrderId);
+                return ids.filter(id => id && !isNaN(id)).join(',');
             }
         """)
         print(f"  -> Got {len(all_ids.split(',')) if all_ids else 0} work order IDs")
