@@ -118,56 +118,13 @@ async def run():
         await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
         await page.wait_for_timeout(5000)
 
-        # Get all row IDs directly from Tabulator
-        all_ids = await page.evaluate("""
-            () => {
-                const rows = window.InspectionTabulator.getData();
-                if (rows.length === 0) return '';
-                // Print first row keys to find correct field name
-                const firstRow = rows[0];
-                const keys = Object.keys(firstRow);
-                console.log('Row keys:', keys.join(', '));
-                console.log('First row values:', Object.values(firstRow).slice(0,5).join(' | '));
-                // WORDER is the work order number field
-                const ids = rows.map(r => r.WORDER || r.worder || r.WOrder || r.workOrderId);
-                return ids.filter(id => id && !isNaN(id)).join(',');
-            }
-        """)
-        print(f"  -> Got {len(all_ids.split(',')) if all_ids else 0} work order IDs")
-        print(f"  -> Sample IDs: {all_ids[:100] if all_ids else 'none'}")
-
-        # Get CSRF token from page
-        csrf_token = await page.evaluate("""
-            () => {
-                const form = document.getElementById('excelPost');
-                if (!form) return '';
-                const csrf = form.querySelector('input[name="csrfp_token"]');
-                return csrf ? csrf.value : '';
-            }
-        """)
-        print(f"  -> CSRF token: {csrf_token[:20] if csrf_token else 'not found'}...")
-
-        if all_ids and csrf_token:
-            # Set IDs in form and submit
-            print("  -> Setting IDs in form and submitting...")
-            async with page.expect_download(timeout=60000) as dl:
-                await page.evaluate(f"""
-                    () => {{
-                        const form = document.getElementById('excelPost');
-                        let idsInput = form.querySelector('input[name="IDs"]');
-                        if (!idsInput) {{
-                            idsInput = document.createElement('input');
-                            idsInput.type = 'hidden';
-                            idsInput.name = 'IDs';
-                            form.appendChild(idsInput);
-                        }}
-                        idsInput.value = '{all_ids}';
-                        form.submit();
-                    }}
-                """)
-            download = await dl.value
-            await download.save_as(OPEN_ORDERS_FILE)
-            print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
+        # Use Full List to Excel — download all orders, dashboard will filter to Assigned only
+        print("  -> Clicking Full List to Excel...")
+        async with page.expect_download(timeout=60000) as dl:
+            await page.locator("#btnFullExcel").click()
+        download = await dl.value
+        await download.save_as(OPEN_ORDERS_FILE)
+        print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
         else:
             print("  ERROR: Could not get IDs or CSRF token")
             # Fallback: just click the button
