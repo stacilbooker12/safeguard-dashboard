@@ -47,7 +47,7 @@
   .bar-fill { height: 100%; border-radius: 3px; }
   .chart-wrap { position: relative; width: 100%; height: 300px; }
   .msg { text-align: center; padding: 3rem; color: #73726c; font-size: 14px; }
-  .debug { background: #f0efe8; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 12px; color: #73726c; font-family: monospace; }
+  .debug { background: #f0efe8; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 12px; color: #73726c; font-family: monospace; line-height: 1.6; }
   @media (max-width: 700px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -62,13 +62,13 @@
   </div>
 
   <div class="metrics">
-    <div class="mcard"><div class="mlabel">30-day rolling</div><div class="mval" id="m1">—</div><div class="msub" id="m1s">Completed orders</div></div>
-    <div class="mcard"><div class="mlabel">Month to date</div><div class="mval" id="m2">—</div><div class="msub" id="m2s">This month</div></div>
+    <div class="mcard"><div class="mlabel">30-day rolling</div><div class="mval" id="m1">—</div><div class="msub">Completed orders</div></div>
+    <div class="mcard"><div class="mlabel">Month to date</div><div class="mval" id="m2">—</div><div class="msub">This month</div></div>
     <div class="mcard"><div class="mlabel">Last 7 days</div><div class="mval" id="m3">—</div><div class="msub">Completed orders</div></div>
     <div class="mcard"><div class="mlabel">Open orders</div><div class="mval" id="m4">—</div><div class="msub" id="m4s">—</div></div>
   </div>
 
-  <div id="debug-info" class="debug" style="display:none"></div>
+  <div id="debug-info" class="debug"></div>
 
   <div class="card">
     <div class="toolbar">
@@ -97,34 +97,33 @@ let allData=[],view='table',filter='ALL',sortK='r30',sortD=-1,chartInst=null;
 const STATES={OH:['OHASB06','OHASB21','OHASB00'],IN:['INASB11','INASB463','INASB465'],NC:['NCASB280'],WV:['WVASB06','WVASB02A','WVASB02','WVASB04','WVASB02B','WVASB000'],PA:['PAASB20','PAASB156','PAASB151'],IL:['ILASB01']};
 function getState(id){for(const[s,ids]of Object.entries(STATES)){if(ids.some(x=>x.toUpperCase()===id.toUpperCase()))return s;}const m=id.match(/^([A-Z]{2})/);return m?m[1]:'??';}
 function setStatus(msg,type){document.getElementById('stxt').textContent=msg;document.getElementById('sdot').className='dot dot-'+(type||'loading');}
+function setDebug(msg){document.getElementById('debug-info').innerHTML=msg;}
 
-// Robust date parser — handles MM/DD/YY, MM/DD/YYYY, Excel serials
 function parseDate(s){
   if(!s&&s!==0)return null;
   const str=s.toString().trim();
-  if(!str||str==='')return null;
-  // MM/DD/YY or MM/DD/YYYY
+  if(!str)return null;
   const slash=str.split('/');
   if(slash.length===3){
     let mo=parseInt(slash[0]),dy=parseInt(slash[1]),yr=parseInt(slash[2]);
     if(yr<100)yr+=2000;
     if(!isNaN(mo)&&!isNaN(dy)&&!isNaN(yr))return new Date(yr,mo-1,dy);
   }
-  // Excel serial number
   const num=parseFloat(str);
   if(!isNaN(num)&&num>40000&&num<50000){
     const d=new Date((num-25569)*86400*1000);
     return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());
   }
-  return null;
+  const d=new Date(str);
+  return isNaN(d.getTime())?null:d;
 }
 
-// Get timestamp at midnight for clean date comparison
 function midnight(d){return new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();}
 
 async function loadData(){
   setStatus('Loading data...','loading');
-  document.getElementById('tv').innerHTML='<div class="msg">Loading your data from GitHub...</div>';
+  setDebug('Loading files...');
+  document.getElementById('tv').innerHTML='<div class="msg">Loading your data...</div>';
   try{
     const cr=await fetch('data/completed_orders.csv');
     if(!cr.ok)throw new Error('Could not load completed_orders.csv ('+cr.status+')');
@@ -143,6 +142,7 @@ async function loadData(){
     setStatus('Updated '+now.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' at '+now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),'ok');
   }catch(e){
     setStatus(e.message,'error');
+    setDebug('Error: '+e.message);
     document.getElementById('tv').innerHTML='<div class="msg" style="color:#A32D2D">'+e.message+'</div>';
   }
 }
@@ -155,46 +155,62 @@ function process(csv,xbuf,mbuf){
   const d7Ts=midnight(new Date(now.getFullYear(),now.getMonth(),now.getDate()-7));
   const mtdTs=midnight(new Date(now.getFullYear(),now.getMonth(),1));
 
-  // Parse dates and get timestamp
-  rows.forEach(r=>{
-    const d=parseDate(r.completiondate);
-    r._ts=d?midnight(d):null;
-  });
-
+  rows.forEach(r=>{const d=parseDate(r.completiondate);r._ts=d?midnight(d):null;});
   const validRows=rows.filter(r=>r._ts!==null);
-  const minTs=Math.min(...validRows.map(r=>r._ts));
-  const maxTs=Math.max(...validRows.map(r=>r._ts));
-  const minDate=new Date(minTs).toLocaleDateString('en-US');
-  const maxDate=new Date(maxTs).toLocaleDateString('en-US');
 
-  // Show debug info
-  const dbg=document.getElementById('debug-info');
-  dbg.style.display='block';
-  dbg.textContent=`Data: ${validRows.length} rows | Date range: ${minDate} to ${maxDate} | Today: ${now.toLocaleDateString('en-US')} | 30-day count: ${validRows.filter(r=>r._ts>=d30Ts).length}`;
+  let debugLines=[];
+  debugLines.push('Completed orders: '+validRows.length+' rows loaded');
+  if(validRows.length>0){
+    const minD=new Date(Math.min(...validRows.map(r=>r._ts))).toLocaleDateString('en-US');
+    const maxD=new Date(Math.max(...validRows.map(r=>r._ts))).toLocaleDateString('en-US');
+    debugLines.push('Date range: '+minD+' to '+maxD);
+    debugLines.push('In 30-day window: '+validRows.filter(r=>r._ts>=d30Ts).length);
+    debugLines.push('In MTD window: '+validRows.filter(r=>r._ts>=mtdTs).length);
+    debugLines.push('In 7-day window: '+validRows.filter(r=>r._ts>=d7Ts).length);
+  }
 
-  // Parse open orders
+  // Parse open orders — try both raw sheet and header detection
   const wb=XLSX.read(xbuf,{type:'array'});
-  const openRows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const openRows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+  debugLines.push('Open orders: '+openRows.length+' rows');
   const oKeys=openRows.length?Object.keys(openRows[0]):[];
-  const oDueCol=oKeys.find(k=>/due/i.test(k))||null;
+  debugLines.push('Open order columns: '+oKeys.slice(0,8).join(', '));
 
   // Parse master spreadsheet
+  // Master columns from console: ORDER DATE, WORDER, INSPECTOR, CLIENT, NAME...
   const dueDateMap={};
   if(mbuf){
-    const mwb=XLSX.read(mbuf,{type:'array'});
-    const mRows=XLSX.utils.sheet_to_json(mwb.Sheets[mwb.SheetNames[0]],{defval:''});
+    const mwb=XLSX.read(mbuf,{type:'array',raw:false});
+    const mws=mwb.Sheets[mwb.SheetNames[0]];
+    const mRows=XLSX.utils.sheet_to_json(mws,{defval:'',raw:false});
     const mKeys=mRows.length?Object.keys(mRows[0]):[];
-    const mWoCol=mKeys.find(k=>/order|wo|work/i.test(k))||mKeys[0];
-    const mDueCol=mKeys.find(k=>/due/i.test(k))||null;
+    debugLines.push('Master columns: '+mKeys.slice(0,8).join(', '));
+
+    // Work order col = WORDER, due date col = ORDER DATE (based on console output)
+    const mWoCol=mKeys.find(k=>k.toUpperCase()==='WORDER')||mKeys.find(k=>/worder|work.?order|^wo$/i.test(k))||null;
+    const mDueCol=mKeys.find(k=>k.toUpperCase()==='ORDER DATE')||mKeys.find(k=>/due|order.?date/i.test(k))||null;
+    debugLines.push('Master WO col: '+mWoCol+' | Due col: '+mDueCol);
+
     if(mWoCol&&mDueCol){
       mRows.forEach(r=>{
         const wo=r[mWoCol].toString().trim();
         const due=parseDate(r[mDueCol].toString());
         if(wo&&due)dueDateMap[wo]=midnight(due);
       });
+      debugLines.push('Due dates loaded from master: '+Object.keys(dueDateMap).length);
+      // Show sample match
+      const sampleWo=Object.keys(dueDateMap)[0];
+      if(sampleWo)debugLines.push('Sample: WO '+sampleWo+' due '+new Date(dueDateMap[sampleWo]).toLocaleDateString('en-US'));
     }
-    dbg.textContent+=` | Master due dates: ${Object.keys(dueDateMap).length}`;
   }
+
+  // Check if workorderid in completed orders matches WORDERs in master
+  const completedWOs=validRows.map(r=>(r.workorderid||'').toString().trim()).filter(Boolean);
+  const masterWOs=Object.keys(dueDateMap);
+  const matches=completedWOs.filter(wo=>dueDateMap[wo]);
+  debugLines.push('WO matches (completed vs master): '+matches.length+' of '+completedWOs.length);
+  if(completedWOs.length>0)debugLines.push('Sample completed WO: "'+completedWOs[0]+'" | Sample master WO: "'+(masterWOs[0]||'none')+'"');
 
   // Build inspector stats
   const map={};
@@ -205,22 +221,20 @@ function process(csv,xbuf,mbuf){
     if(r._ts>=d30Ts)map[id].r30++;
     if(r._ts>=mtdTs)map[id].mtd++;
     if(r._ts>=d7Ts)map[id].r7++;
-    // On-time from master
     const wo=(r.workorderid||'').toString().trim();
     const dueTs=dueDateMap[wo];
-    if(dueTs){
-      if(r._ts<=dueTs)map[id].ontime++;
-      else map[id].late++;
-    }
+    if(dueTs){if(r._ts<=dueTs)map[id].ontime++;else map[id].late++;}
   });
 
   allData=Object.values(map);
+  setDebug(debugLines.join('<br>'));
 
   document.getElementById('m1').textContent=validRows.filter(r=>r._ts>=d30Ts).length.toLocaleString();
   document.getElementById('m2').textContent=validRows.filter(r=>r._ts>=mtdTs).length.toLocaleString();
   document.getElementById('m3').textContent=validRows.filter(r=>r._ts>=d7Ts).length.toLocaleString();
   document.getElementById('m4').textContent=openRows.length.toLocaleString();
 
+  const oDueCol=oKeys.find(k=>/due/i.test(k))||null;
   const overdue=oDueCol?openRows.filter(r=>{const d=parseDate((r[oDueCol]||'').toString());return d&&midnight(d)<nowTs;}).length:0;
   document.getElementById('m4s').textContent=overdue>0?overdue+' overdue':'All on track';
 
