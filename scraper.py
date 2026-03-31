@@ -144,10 +144,12 @@ async def run():
             if "ASOFFICE" in selected.upper() or any("ASOFFICE" in o.upper() for o in options):
                 print(f"  -> Changing Inspector dropdown {i} to All...")
                 await selects.nth(i).select_option(index=0)
-                await page.wait_for_timeout(8000)
+                await page.wait_for_timeout(20000)  # Wait longer for data to load
                 print("  OK Inspector set to All")
                 break
 
+        print("  -> Waiting for data to fully load before downloading...")
+        await page.wait_for_timeout(15000)
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFilteredExcel").click()
