@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 11 - Clear InspectionTabulator filter then wait for IDs to populate
+Version 12 - Clear filter, wait for rows to update, then click download
 """
 
 import asyncio
@@ -112,27 +112,39 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Clear InspectionTabulator filter and wait for IDs to populate
+        # Check initial row count with ASOFFICE filter
+        initial_rows = await page.evaluate("""
+            () => {
+                if (window.InspectionTabulator) {
+                    return window.InspectionTabulator.getDataCount();
+                }
+                return -1;
+            }
+        """)
+        print(f"  -> Initial row count (ASOFFICE only): {initial_rows}")
+
+        # Clear InspectionTabulator filter
         print("  -> Clearing InspectionTabulator filter...")
         await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
-        
-        # Wait for the IDs field to be populated after filter clears
-        print("  -> Waiting for table to update with all inspectors...")
+
+        # Wait for row count to increase (more inspectors = more rows)
+        print("  -> Waiting for all inspector rows to load...")
         for attempt in range(20):
             await page.wait_for_timeout(3000)
-            ids_value = await page.evaluate("""
+            current_rows = await page.evaluate("""
                 () => {
-                    const form = document.getElementById('excelPost');
-                    if (!form) return 'no form';
-                    const idsInput = form.querySelector('input[name="IDs"]');
-                    return idsInput ? idsInput.value.length + ' chars' : 'no IDs field';
+                    if (window.InspectionTabulator) {
+                        return window.InspectionTabulator.getDataCount();
+                    }
+                    return -1;
                 }
             """)
-            print(f"  -> Attempt {attempt+1}: IDs field = {ids_value}")
-            if ids_value != '0 chars' and ids_value != 'no IDs field' and ids_value != 'no form':
-                print(f"  OK IDs populated!")
+            print(f"  -> Attempt {attempt+1}: {current_rows} rows (started with {initial_rows})")
+            if current_rows > initial_rows and current_rows > 0:
+                print(f"  OK All inspector rows loaded! ({current_rows} rows)")
                 break
 
+        # Click download - button handler will collect IDs from current visible rows
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFilteredExcel").click()
