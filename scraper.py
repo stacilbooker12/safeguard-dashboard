@@ -143,13 +143,16 @@ async def run():
             print(f"  Dropdown {i}: selected='{selected}' options={options[:4]}")
             if "ASOFFICE" in selected.upper() or any("ASOFFICE" in o.upper() for o in options):
                 print(f"  -> Changing Inspector dropdown {i} to All...")
-                await selects.nth(i).select_option(index=0)
-                await page.wait_for_timeout(20000)  # Wait longer for data to load
-                print("  OK Inspector set to All")
+                # Change dropdown and wait for page to reload automatically
+                async with page.expect_navigation(timeout=30000, wait_until="load"):
+                    await selects.nth(i).select_option(index=0)
+                print("  OK Page reloaded after dropdown change!")
+                # Wait for button to appear confirming data is loaded
+                await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
+                await page.wait_for_timeout(5000)
+                print("  OK Data fully loaded after inspector change")
                 break
 
-        print("  -> Waiting for data to fully load before downloading...")
-        await page.wait_for_timeout(15000)
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFilteredExcel").click()
