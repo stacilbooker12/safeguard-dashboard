@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 16 - Direct POST to inspection-list-service.php with all IDs
+Version 17 - Uses Full List to Excel, dashboard filters to Assigned only
 """
 
 import asyncio
@@ -16,7 +16,6 @@ LOGIN_URL   = f"{BASE_URL}/login.php"
 REPORTS_URL = f"{BASE_URL}/reports/main.php"
 LISTING_URL = f"{BASE_URL}/reports/listing.php"
 INSP_URL    = f"{BASE_URL}/inspsvc/main.php"
-EXPORT_URL  = f"{BASE_URL}/inspsvc/inspection-list-service.php?oper=excelFilter"
 
 OUTPUT_DIR       = "data"
 COMPLETED_FILE   = f"{OUTPUT_DIR}/completed_orders.csv"
@@ -107,32 +106,18 @@ async def run():
         await download.save_as(COMPLETED_FILE)
         print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
 
-        # ── STEP 7: Open Orders via direct API call ─────────────────
-        print("  -> Going to Inspections page to get session/CSRF...")
+        # ── STEP 7: Open Orders - Full List then filter in dashboard ─
+        print("  -> Going to Inspections page...")
         await page.goto(INSP_URL, wait_until="load", timeout=PAGE_TIMEOUT)
-        await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
+        await page.wait_for_selector("#btnFullExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Clear filter and get ALL work order IDs via Tabulator API
-        print("  -> Clearing filter and collecting all work order IDs...")
-        await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
-        await page.wait_for_timeout(5000)
-
-        # Use Full List to Excel — download all orders, dashboard will filter to Assigned only
         print("  -> Clicking Full List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFullExcel").click()
         download = await dl.value
         await download.save_as(OPEN_ORDERS_FILE)
         print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
-        else:
-            print("  ERROR: Could not get IDs or CSRF token")
-            # Fallback: just click the button
-            async with page.expect_download(timeout=60000) as dl:
-                await page.locator("#btnFilteredExcel").click()
-            download = await dl.value
-            await download.save_as(OPEN_ORDERS_FILE)
-            print(f"  OK Open orders saved (fallback) -> {OPEN_ORDERS_FILE}")
 
         # ── Done ────────────────────────────────────────────────────
         with open(LAST_UPDATED, "w") as f:
