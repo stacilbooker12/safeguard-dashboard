@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 15 - Wait for getGridIDs to async populate IDs field
+Version 16 - Direct POST to inspection-list-service.php with all IDs
 """
 
 import asyncio
@@ -16,6 +16,7 @@ LOGIN_URL   = f"{BASE_URL}/login.php"
 REPORTS_URL = f"{BASE_URL}/reports/main.php"
 LISTING_URL = f"{BASE_URL}/reports/listing.php"
 INSP_URL    = f"{BASE_URL}/inspsvc/main.php"
+EXPORT_URL  = f"{BASE_URL}/inspsvc/inspection-list-service.php?oper=excelFilter"
 
 OUTPUT_DIR       = "data"
 COMPLETED_FILE   = f"{OUTPUT_DIR}/completed_orders.csv"
@@ -106,52 +107,69 @@ async def run():
         await download.save_as(COMPLETED_FILE)
         print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
 
-        # ── STEP 7: Open Orders ─────────────────────────────────────
-        print("  -> Going to Inspections page...")
+        # ── STEP 7: Open Orders via direct API call ─────────────────
+        print("  -> Going to Inspections page to get session/CSRF...")
         await page.goto(INSP_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Clear filter to show all inspectors
-        print("  -> Clearing InspectionTabulator filter...")
+        # Clear filter and get ALL work order IDs via Tabulator API
+        print("  -> Clearing filter and collecting all work order IDs...")
         await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
         await page.wait_for_timeout(5000)
-        row_count = await page.evaluate("() => window.InspectionTabulator.getDataCount()")
-        print(f"  -> Row count after clear: {row_count}")
 
-        # Call getGridIDs and poll until IDs field is populated
-        print("  -> Calling getGridIDs(false) and waiting for IDs to populate...")
-        await page.evaluate("() => { getGridIDs(false); }")
-        
-        ids_length = 0
-        for attempt in range(20):
-            await page.wait_for_timeout(2000)
-            ids_length = await page.evaluate("""
-                () => {
-                    const form = document.getElementById('excelPost');
-                    if (!form) return 0;
-                    const ids = form.querySelector('input[name="IDs"]');
-                    return ids ? ids.value.length : 0;
-                }
-            """)
-            print(f"  -> Attempt {attempt+1}: IDs length = {ids_length}")
-            if ids_length > 0:
-                print(f"  OK IDs populated! Length: {ids_length}")
-                break
-            # Call getGridIDs again in case it needs re-triggering
-            if attempt % 3 == 2:
-                await page.evaluate("() => { getGridIDs(false); }")
+        # Get all row IDs directly from Tabulator
+        all_ids = await page.evaluate("""
+            () => {
+                const rows = window.InspectionTabulator.getData();
+                // Try different possible ID field names
+                const ids = rows.map(r => r.WORDER || r.worder || r.workorder || r.id || r.ID || Object.values(r)[1]);
+                return ids.filter(id => id).join(',');
+            }
+        """)
+        print(f"  -> Got {len(all_ids.split(',')) if all_ids else 0} work order IDs")
+        print(f"  -> Sample IDs: {all_ids[:100] if all_ids else 'none'}")
 
-        if ids_length == 0:
-            print("  WARNING: IDs still empty — submitting anyway")
+        # Get CSRF token from page
+        csrf_token = await page.evaluate("""
+            () => {
+                const form = document.getElementById('excelPost');
+                if (!form) return '';
+                const csrf = form.querySelector('input[name="csrfp_token"]');
+                return csrf ? csrf.value : '';
+            }
+        """)
+        print(f"  -> CSRF token: {csrf_token[:20] if csrf_token else 'not found'}...")
 
-        # Submit the form directly now that IDs should be populated
-        print("  -> Submitting excelPost form...")
-        async with page.expect_download(timeout=60000) as dl:
-            await page.evaluate("() => { document.getElementById('excelPost').submit(); }")
-        download = await dl.value
-        await download.save_as(OPEN_ORDERS_FILE)
-        print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
+        if all_ids and csrf_token:
+            # Set IDs in form and submit
+            print("  -> Setting IDs in form and submitting...")
+            async with page.expect_download(timeout=60000) as dl:
+                await page.evaluate(f"""
+                    () => {{
+                        const form = document.getElementById('excelPost');
+                        let idsInput = form.querySelector('input[name="IDs"]');
+                        if (!idsInput) {{
+                            idsInput = document.createElement('input');
+                            idsInput.type = 'hidden';
+                            idsInput.name = 'IDs';
+                            form.appendChild(idsInput);
+                        }}
+                        idsInput.value = '{all_ids}';
+                        form.submit();
+                    }}
+                """)
+            download = await dl.value
+            await download.save_as(OPEN_ORDERS_FILE)
+            print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
+        else:
+            print("  ERROR: Could not get IDs or CSRF token")
+            # Fallback: just click the button
+            async with page.expect_download(timeout=60000) as dl:
+                await page.locator("#btnFilteredExcel").click()
+            download = await dl.value
+            await download.save_as(OPEN_ORDERS_FILE)
+            print(f"  OK Open orders saved (fallback) -> {OPEN_ORDERS_FILE}")
 
         # ── Done ────────────────────────────────────────────────────
         with open(LAST_UPDATED, "w") as f:
