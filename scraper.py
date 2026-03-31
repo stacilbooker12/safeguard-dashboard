@@ -132,26 +132,39 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Find Inspector dropdown and set to All
-        selects = page.locator("select")
-        sel_count = await selects.count()
-        print(f"  Found {sel_count} dropdowns")
+        # Wait for Inspector dropdown to populate with ASOFFICE option
+        print("  -> Waiting for Inspector dropdown to populate...")
+        inspector_select = None
+        for attempt in range(20):
+            selects = page.locator("select")
+            sel_count = await selects.count()
+            for i in range(sel_count):
+                options = await selects.nth(i).locator("option").all_inner_texts()
+                selected = await selects.nth(i).input_value()
+                if "ASOFFICE" in selected.upper() or any("ASOFFICE" in o.upper() for o in options):
+                    inspector_select = selects.nth(i)
+                    print(f"  -> Found Inspector dropdown at index {i} (attempt {attempt+1})")
+                    print(f"     selected='{selected}' options={options[:5]}")
+                    break
+            if inspector_select:
+                break
+            print(f"  -> Attempt {attempt+1}: dropdown not ready yet, waiting 3 seconds...")
+            await page.wait_for_timeout(3000)
 
-        for i in range(sel_count):
-            options = await selects.nth(i).locator("option").all_inner_texts()
-            selected = await selects.nth(i).input_value()
-            print(f"  Dropdown {i}: selected='{selected}' options={options[:4]}")
-            if "ASOFFICE" in selected.upper() or any("ASOFFICE" in o.upper() for o in options):
-                print(f"  -> Changing Inspector dropdown {i} to All...")
-                # Change dropdown and wait for page to reload automatically
+        if inspector_select:
+            print("  -> Changing Inspector to All...")
+            try:
                 async with page.expect_navigation(timeout=30000, wait_until="load"):
-                    await selects.nth(i).select_option(index=0)
+                    await inspector_select.select_option(index=0)
                 print("  OK Page reloaded after dropdown change!")
-                # Wait for button to appear confirming data is loaded
                 await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
                 await page.wait_for_timeout(5000)
-                print("  OK Data fully loaded after inspector change")
-                break
+                print("  OK Inspector set to All, data loaded")
+            except Exception as e:
+                print(f"  Navigation wait error: {e} - continuing anyway")
+                await page.wait_for_timeout(10000)
+        else:
+            print("  WARNING: Could not find Inspector dropdown after 20 attempts")
 
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
