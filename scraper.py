@@ -132,39 +132,51 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Wait for Inspector dropdown to populate with ASOFFICE option
-        print("  -> Waiting for Inspector dropdown to populate...")
-        inspector_select = None
-        for attempt in range(20):
-            selects = page.locator("select")
-            sel_count = await selects.count()
-            for i in range(sel_count):
-                options = await selects.nth(i).locator("option").all_inner_texts()
-                selected = await selects.nth(i).input_value()
-                if "ASOFFICE" in selected.upper() or any("ASOFFICE" in o.upper() for o in options):
-                    inspector_select = selects.nth(i)
-                    print(f"  -> Found Inspector dropdown at index {i} (attempt {attempt+1})")
-                    print(f"     selected='{selected}' options={options[:5]}")
-                    break
-            if inspector_select:
-                break
-            print(f"  -> Attempt {attempt+1}: dropdown not ready yet, waiting 3 seconds...")
-            await page.wait_for_timeout(3000)
-
-        if inspector_select:
-            print("  -> Changing Inspector to All...")
-            try:
-                async with page.expect_navigation(timeout=30000, wait_until="load"):
-                    await inspector_select.select_option(index=0)
-                print("  OK Page reloaded after dropdown change!")
-                await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
-                await page.wait_for_timeout(5000)
-                print("  OK Inspector set to All, data loaded")
-            except Exception as e:
-                print(f"  Navigation wait error: {e} - continuing anyway")
-                await page.wait_for_timeout(10000)
-        else:
-            print("  WARNING: Could not find Inspector dropdown after 20 attempts")
+        # Use JavaScript to directly set the inspector dropdown to All and trigger reload
+        print("  -> Using JavaScript to find and change Inspector dropdown...")
+        
+        # Print all select elements and their options via JS for debugging
+        select_info = await page.evaluate("""
+            () => {
+                const selects = document.querySelectorAll('select');
+                return Array.from(selects).map((s, i) => ({
+                    index: i,
+                    id: s.id,
+                    name: s.name,
+                    value: s.value,
+                    options: Array.from(s.options).map(o => o.text + '=' + o.value).slice(0, 5)
+                }));
+            }
+        """)
+        for s in select_info:
+            print(f"  Select {s['index']}: id={s['id']} name={s['name']} value={s['value']} options={s['options'][:3]}")
+        
+        # Find inspector select by looking for one that has inspector-like options
+        changed = await page.evaluate("""
+            () => {
+                const selects = document.querySelectorAll('select');
+                for (let sel of selects) {
+                    const opts = Array.from(sel.options).map(o => o.text.toUpperCase());
+                    if (opts.some(o => o.includes('ASOFFICE') || o.includes('ALL') || o.includes('INSPECTOR'))) {
+                        // Set to first option (All)
+                        sel.selectedIndex = 0;
+                        sel.dispatchEvent(new Event('change', { bubbles: true }));
+                        return 'Changed: ' + sel.id + ' to ' + sel.options[0].text;
+                    }
+                }
+                return 'Not found';
+            }
+        """)
+        print(f"  -> JS result: {changed}")
+        
+        # Wait for page to reload after change
+        try:
+            await page.wait_for_load_state("networkidle", timeout=30000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(8000)
+        await page.wait_for_selector("#btnFilteredExcel", timeout=30000)
+        print("  OK Page reloaded, ready to download")
 
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
