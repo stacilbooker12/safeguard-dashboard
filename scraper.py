@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 9 - Wait for new report to appear in list before downloading
+Version 10 - Uses Tabulator API to clear inspector filter
 """
 
 import asyncio
@@ -70,9 +70,7 @@ async def run():
         print("  -> Checking current report count before requesting...")
         await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
-        
-        initial_links = page.locator("table a")
-        initial_count = await initial_links.count()
+        initial_count = await page.locator("table a").count()
         print(f"  -> Reports in list before request: {initial_count}")
 
         # ── STEP 4: Request new report ─────────────────────────────
@@ -85,43 +83,29 @@ async def run():
 
         # ── STEP 5: Wait for new report to appear ──────────────────
         print("  -> Waiting for new report to appear in Report List...")
-        max_wait = 30  # max 30 attempts x 15 seconds = 7.5 minutes
         new_count = initial_count
-        
-        for attempt in range(max_wait):
+        for attempt in range(30):
             await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
             await page.wait_for_timeout(5000)
             new_count = await page.locator("table a").count()
-            print(f"  -> Attempt {attempt+1}: {new_count} reports in list (waiting for {initial_count+1})")
-            
+            print(f"  -> Attempt {attempt+1}: {new_count} reports (waiting for {initial_count+1})")
             if new_count > initial_count:
-                print(f"  OK New report appeared! ({new_count} reports now)")
+                print(f"  OK New report appeared!")
                 break
-            
-            if attempt < max_wait - 1:
-                print(f"  -> Not ready yet, waiting 15 seconds...")
+            if attempt < 29:
                 await asyncio.sleep(15)
-        
-        if new_count <= initial_count:
-            print("  WARNING: Report never appeared, trying to download most recent anyway...")
 
-        # ── STEP 6: Download the newest report ─────────────────────
+        # ── STEP 6: Download completed orders ──────────────────────
         print("  -> Clicking first (newest) report in list...")
         links = page.locator("table a")
-        link_count = await links.count()
-        print(f"  Found {link_count} links")
-        
         first_href = await links.first.get_attribute("href")
         print(f"  -> Clicking: {first_href}")
         await links.first.click()
         await page.wait_for_timeout(NAV_WAIT)
         print(f"  -> Now on: {page.url}")
 
-        csv_btn = page.locator("input[value='Download CSV']")
-        print(f"  Found {await csv_btn.count()} Download CSV buttons")
-
         async with page.expect_download(timeout=60000) as dl:
-            await csv_btn.first.click()
+            await page.locator("input[value='Download CSV']").first.click()
         download = await dl.value
         await download.save_as(COMPLETED_FILE)
         print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
@@ -132,8 +116,8 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # The Inspector filter is a Tabulator search input — clear it to show all inspectors
-       print("  -> Inspecting page for Tabulator instance and form...")
+        # Inspect the page to find Tabulator instance and form details
+        print("  -> Inspecting page for Tabulator instance and form...")
         result = await page.evaluate("""
             () => {
                 const info = {};
@@ -143,7 +127,7 @@ async def run():
                     info.formInputs = Array.from(form.querySelectorAll('input')).map(i => i.name + '=' + i.value);
                 }
                 const tabulatorKeys = Object.keys(window).filter(k => {
-                    try { return window[k] && window[k].rowManager && typeof window[k].clearFilter === 'function'; } 
+                    try { return window[k] && window[k].rowManager && typeof window[k].clearFilter === 'function'; }
                     catch(e) { return false; }
                 });
                 info.tabulatorVars = tabulatorKeys;
@@ -151,11 +135,17 @@ async def run():
                     window[tabulatorKeys[0]].clearFilter(true);
                     info.clearedVia = tabulatorKeys[0];
                 }
+                const tabEl = document.querySelector('.tabulator');
+                if (tabEl && tabEl.tabulator) {
+                    tabEl.tabulator.clearFilter(true);
+                    info.clearedViaEl = true;
+                }
                 return JSON.stringify(info);
             }
         """)
         print(f"  -> Page info: {result}")
         await page.wait_for_timeout(8000)
+
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFilteredExcel").click()
