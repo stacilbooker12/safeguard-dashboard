@@ -75,7 +75,7 @@ async def run():
         await page.get_by_text("New Invoice Summary 30 Days", exact=True).first.click()
         await page.wait_for_timeout(5000)
         print("  OK Report requested - waiting 90 seconds...")
-        await asyncio.sleep(90)
+        await asyncio.sleep(180)  # Wait 3 minutes for slow Safeguard server
 
         # ── STEP 4: Download Completed Orders ──────────────────────
         print("  -> Going to Report List...")
