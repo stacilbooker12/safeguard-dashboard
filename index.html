@@ -171,8 +171,10 @@ function process(csv,xbuf,mbuf){
   // Parse open orders — try both raw sheet and header detection
   const wb=XLSX.read(xbuf,{type:'array'});
   const ws=wb.Sheets[wb.SheetNames[0]];
-  const openRows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
-  debugLines.push('Open orders: '+openRows.length+' rows');
+  const allOpenRows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+  const openRows=allOpenRows.filter(r=>{const s=(r.STATUS||r.Status||'').toString().toUpperCase();return s.includes('ASSIGN');});
+  console.log('Total: '+allOpenRows.length+' | Assigned: '+openRows.length);
+  debugLines.push('Open orders: '+openRows.length+' rows (Assigned only, '+allOpenRows.length+' total)');
   const oKeys=openRows.length?Object.keys(openRows[0]):[];
   debugLines.push('Open order columns: '+oKeys.slice(0,8).join(', '));
 
