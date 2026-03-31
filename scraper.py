@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 10 - Uses Tabulator API to clear inspector filter
+Version 11 - Clear InspectionTabulator filter then wait for IDs to populate
 """
 
 import asyncio
@@ -44,12 +44,10 @@ async def run():
         print("  -> Loading login page...")
         await page.goto(LOGIN_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
-
         await page.locator("input[type='text']").first.fill(VENDOR_CODE)
         await page.wait_for_timeout(1000)
         await page.locator("input[type='password']").first.fill(PASSWORD)
         await page.wait_for_timeout(1000)
-
         print("  -> Clicking Login...")
         await page.locator("input[type='submit']").first.click()
         await page.wait_for_timeout(10000)
@@ -67,11 +65,11 @@ async def run():
             print("  No popup found")
 
         # ── STEP 3: Count existing reports BEFORE requesting ────────
-        print("  -> Checking current report count before requesting...")
+        print("  -> Checking current report count...")
         await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
         initial_count = await page.locator("table a").count()
-        print(f"  -> Reports in list before request: {initial_count}")
+        print(f"  -> Reports before request: {initial_count}")
 
         # ── STEP 4: Request new report ─────────────────────────────
         print("  -> Requesting New Invoice Summary 30 Days...")
@@ -82,13 +80,13 @@ async def run():
         print("  OK Report requested!")
 
         # ── STEP 5: Wait for new report to appear ──────────────────
-        print("  -> Waiting for new report to appear in Report List...")
+        print("  -> Waiting for new report to appear...")
         new_count = initial_count
         for attempt in range(30):
             await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
             await page.wait_for_timeout(5000)
             new_count = await page.locator("table a").count()
-            print(f"  -> Attempt {attempt+1}: {new_count} reports (waiting for {initial_count+1})")
+            print(f"  -> Attempt {attempt+1}: {new_count} reports")
             if new_count > initial_count:
                 print(f"  OK New report appeared!")
                 break
@@ -96,14 +94,12 @@ async def run():
                 await asyncio.sleep(15)
 
         # ── STEP 6: Download completed orders ──────────────────────
-        print("  -> Clicking first (newest) report in list...")
+        print("  -> Clicking newest report...")
         links = page.locator("table a")
         first_href = await links.first.get_attribute("href")
         print(f"  -> Clicking: {first_href}")
         await links.first.click()
         await page.wait_for_timeout(NAV_WAIT)
-        print(f"  -> Now on: {page.url}")
-
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("input[value='Download CSV']").first.click()
         download = await dl.value
@@ -116,35 +112,26 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Inspect the page to find Tabulator instance and form details
-        print("  -> Inspecting page for Tabulator instance and form...")
-        result = await page.evaluate("""
-            () => {
-                const info = {};
-                const form = document.getElementById('excelPost');
-                if (form) {
-                    info.formAction = form.action;
-                    info.formInputs = Array.from(form.querySelectorAll('input')).map(i => i.name + '=' + i.value);
+        # Clear InspectionTabulator filter and wait for IDs to populate
+        print("  -> Clearing InspectionTabulator filter...")
+        await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
+        
+        # Wait for the IDs field to be populated after filter clears
+        print("  -> Waiting for table to update with all inspectors...")
+        for attempt in range(20):
+            await page.wait_for_timeout(3000)
+            ids_value = await page.evaluate("""
+                () => {
+                    const form = document.getElementById('excelPost');
+                    if (!form) return 'no form';
+                    const idsInput = form.querySelector('input[name="IDs"]');
+                    return idsInput ? idsInput.value.length + ' chars' : 'no IDs field';
                 }
-                const tabulatorKeys = Object.keys(window).filter(k => {
-                    try { return window[k] && window[k].rowManager && typeof window[k].clearFilter === 'function'; }
-                    catch(e) { return false; }
-                });
-                info.tabulatorVars = tabulatorKeys;
-                if (tabulatorKeys.length > 0) {
-                    window[tabulatorKeys[0]].clearFilter(true);
-                    info.clearedVia = tabulatorKeys[0];
-                }
-                const tabEl = document.querySelector('.tabulator');
-                if (tabEl && tabEl.tabulator) {
-                    tabEl.tabulator.clearFilter(true);
-                    info.clearedViaEl = true;
-                }
-                return JSON.stringify(info);
-            }
-        """)
-        print(f"  -> Page info: {result}")
-        await page.wait_for_timeout(8000)
+            """)
+            print(f"  -> Attempt {attempt+1}: IDs field = {ids_value}")
+            if ids_value != '0 chars' and ids_value != 'no IDs field' and ids_value != 'no form':
+                print(f"  OK IDs populated!")
+                break
 
         print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
@@ -156,7 +143,6 @@ async def run():
         # ── Done ────────────────────────────────────────────────────
         with open(LAST_UPDATED, "w") as f:
             f.write(today)
-
         await browser.close()
         print(f"\nSUCCESS! Both reports downloaded at {today}")
 
