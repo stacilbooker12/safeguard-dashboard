@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 8 - Fixed button selectors using actual HTML IDs
+Version 9 - Wait for new report to appear in list before downloading
 """
 
 import asyncio
@@ -66,49 +66,73 @@ async def run():
         except Exception:
             print("  No popup found")
 
-        # ── STEP 3: Request Completed Orders Report ─────────────────
-        print("  -> Going to Reports page...")
-        await page.goto(REPORTS_URL, wait_until="load", timeout=PAGE_TIMEOUT)
-        await page.wait_for_timeout(NAV_WAIT)
-
-        print("  -> Clicking New Invoice Summary 30 Days...")
-        await page.get_by_text("New Invoice Summary 30 Days", exact=True).first.click()
-        await page.wait_for_timeout(5000)
-        print("  OK Report requested - waiting 90 seconds...")
-        await asyncio.sleep(180)  # Wait 3 minutes for slow Safeguard server
-
-        # ── STEP 4: Download Completed Orders ──────────────────────
-        print("  -> Going to Report List...")
+        # ── STEP 3: Count existing reports BEFORE requesting ────────
+        print("  -> Checking current report count before requesting...")
         await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
         await page.wait_for_timeout(NAV_WAIT)
+        
+        initial_links = page.locator("table a")
+        initial_count = await initial_links.count()
+        print(f"  -> Reports in list before request: {initial_count}")
 
+        # ── STEP 4: Request new report ─────────────────────────────
+        print("  -> Requesting New Invoice Summary 30 Days...")
+        await page.goto(REPORTS_URL, wait_until="load", timeout=PAGE_TIMEOUT)
+        await page.wait_for_timeout(NAV_WAIT)
+        await page.get_by_text("New Invoice Summary 30 Days", exact=True).first.click()
+        await page.wait_for_timeout(5000)
+        print("  OK Report requested!")
+
+        # ── STEP 5: Wait for new report to appear ──────────────────
+        print("  -> Waiting for new report to appear in Report List...")
+        max_wait = 30  # max 30 attempts x 15 seconds = 7.5 minutes
+        new_count = initial_count
+        
+        for attempt in range(max_wait):
+            await page.goto(LISTING_URL, wait_until="load", timeout=PAGE_TIMEOUT)
+            await page.wait_for_timeout(5000)
+            new_count = await page.locator("table a").count()
+            print(f"  -> Attempt {attempt+1}: {new_count} reports in list (waiting for {initial_count+1})")
+            
+            if new_count > initial_count:
+                print(f"  OK New report appeared! ({new_count} reports now)")
+                break
+            
+            if attempt < max_wait - 1:
+                print(f"  -> Not ready yet, waiting 15 seconds...")
+                await asyncio.sleep(15)
+        
+        if new_count <= initial_count:
+            print("  WARNING: Report never appeared, trying to download most recent anyway...")
+
+        # ── STEP 6: Download the newest report ─────────────────────
+        print("  -> Clicking first (newest) report in list...")
         links = page.locator("table a")
         link_count = await links.count()
-        print(f"  Found {link_count} links in report table")
-        first_link_href = await links.first.get_attribute("href")
-        print(f"  -> Clicking: {first_link_href}")
+        print(f"  Found {link_count} links")
+        
+        first_href = await links.first.get_attribute("href")
+        print(f"  -> Clicking: {first_href}")
         await links.first.click()
         await page.wait_for_timeout(NAV_WAIT)
         print(f"  -> Now on: {page.url}")
 
+        csv_btn = page.locator("input[value='Download CSV']")
+        print(f"  Found {await csv_btn.count()} Download CSV buttons")
+
         async with page.expect_download(timeout=60000) as dl:
-            await page.locator("input[value='Download CSV']").first.click()
+            await csv_btn.first.click()
         download = await dl.value
         await download.save_as(COMPLETED_FILE)
         print(f"  OK Completed orders saved -> {COMPLETED_FILE}")
 
-        # ── STEP 5: Open Orders ─────────────────────────────────────
+        # ── STEP 7: Open Orders ─────────────────────────────────────
         print("  -> Going to Inspections page...")
         await page.goto(INSP_URL, wait_until="load", timeout=PAGE_TIMEOUT)
-
-        # Wait for the button using its actual ID: btnFilteredExcel
-        print("  -> Waiting for Inspections page to fully load...")
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
-        print("  OK Page fully loaded - btnFilteredExcel found!")
+        print("  OK Inspections page fully loaded!")
 
-        # Find and change the Inspector dropdown
-        # The form posts to inspection-list-service.php
-        # Inspector filter is a select in the filter row
+        # Find Inspector dropdown and set to All
         selects = page.locator("select")
         sel_count = await selects.count()
         print(f"  Found {sel_count} dropdowns")
@@ -116,7 +140,7 @@ async def run():
         for i in range(sel_count):
             options = await selects.nth(i).locator("option").all_inner_texts()
             selected = await selects.nth(i).input_value()
-            print(f"  Dropdown {i}: selected='{selected}' options={options[:6]}")
+            print(f"  Dropdown {i}: selected='{selected}' options={options[:4]}")
             if "ASOFFICE" in selected.upper() or any("ASOFFICE" in o.upper() for o in options):
                 print(f"  -> Changing Inspector dropdown {i} to All...")
                 await selects.nth(i).select_option(index=0)
@@ -124,8 +148,7 @@ async def run():
                 print("  OK Inspector set to All")
                 break
 
-        # Click Filtered List to Excel using the button ID
-        print("  -> Clicking Filtered List to Excel (btnFilteredExcel)...")
+        print("  -> Clicking Filtered List to Excel...")
         async with page.expect_download(timeout=60000) as dl:
             await page.locator("#btnFilteredExcel").click()
         download = await dl.value
