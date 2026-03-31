@@ -1,6 +1,6 @@
 """
 Safeguard Properties - Daily Report Automation
-Version 13 - Intercept form submission to see what IDs are sent
+Version 14 - Call getGridIDs(false) then submit form directly
 """
 
 import asyncio
@@ -112,38 +112,7 @@ async def run():
         await page.wait_for_selector("#btnFilteredExcel", timeout=60000)
         print("  OK Inspections page fully loaded!")
 
-        # Check the button's onclick handler to understand how IDs are populated
-        btn_info = await page.evaluate("""
-            () => {
-                const btn = document.getElementById('btnFilteredExcel');
-                if (!btn) return 'button not found';
-                return {
-                    onclick: btn.onclick ? btn.onclick.toString() : 'no onclick',
-                    outerHTML: btn.outerHTML,
-                    eventListeners: 'check source'
-                };
-            }
-        """)
-        print(f"  -> Button info: {btn_info}")
-
-        # Get the page source around btnFilteredExcel to find the click handler
-        source_snippet = await page.evaluate("""
-            () => {
-                // Look for the script that handles btnFilteredExcel
-                const scripts = document.querySelectorAll('script');
-                for (let s of scripts) {
-                    if (s.textContent.includes('btnFilteredExcel')) {
-                        // Return relevant portion
-                        const idx = s.textContent.indexOf('btnFilteredExcel');
-                        return s.textContent.substring(Math.max(0, idx-200), idx+500);
-                    }
-                }
-                return 'not found in scripts';
-            }
-        """)
-        print(f"  -> Script handler: {source_snippet[:500]}")
-
-        # Clear filter and wait for rows
+        # Clear InspectionTabulator filter to show all inspectors
         print("  -> Clearing InspectionTabulator filter...")
         await page.evaluate("() => { window.InspectionTabulator.clearFilter(true); }")
         await page.wait_for_timeout(5000)
@@ -151,20 +120,32 @@ async def run():
         row_count = await page.evaluate("() => window.InspectionTabulator.getDataCount()")
         print(f"  -> Row count after clear: {row_count}")
 
-        # Check IDs field right before clicking
-        ids_before = await page.evaluate("""
+        # Call getGridIDs(false) to populate the IDs field, then submit form
+        print("  -> Calling getGridIDs(false) to populate form IDs...")
+        await page.evaluate("() => { getGridIDs(false); }")
+        await page.wait_for_timeout(3000)
+
+        # Check IDs are now populated
+        ids_info = await page.evaluate("""
             () => {
                 const form = document.getElementById('excelPost');
                 if (!form) return 'no form';
                 const ids = form.querySelector('input[name="IDs"]');
-                return ids ? 'IDs length: ' + ids.value.length + ' value start: ' + ids.value.substring(0,50) : 'no IDs input';
+                if (!ids) return 'no IDs input';
+                return 'IDs length: ' + ids.value.length + ' | first 100: ' + ids.value.substring(0,100);
             }
         """)
-        print(f"  -> IDs before click: {ids_before}")
+        print(f"  -> IDs after getGridIDs: {ids_info}")
 
-        print("  -> Clicking Filtered List to Excel...")
+        # Submit the form directly
+        print("  -> Submitting excelPost form...")
         async with page.expect_download(timeout=60000) as dl:
-            await page.locator("#btnFilteredExcel").click()
+            await page.evaluate("""
+                () => {
+                    const form = document.getElementById('excelPost');
+                    form.submit();
+                }
+            """)
         download = await dl.value
         await download.save_as(OPEN_ORDERS_FILE)
         print(f"  OK Open orders saved -> {OPEN_ORDERS_FILE}")
