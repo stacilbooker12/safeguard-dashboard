@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inspector Performance Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f0; color: #1a1a18; min-height: 100vh; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #e0dfd6; flex-wrap: wrap; gap: 12px; }
+  .header-left h1 { font-size: 20px; font-weight: 600; color: #1a1a18; }
+  .header-left p { font-size: 13px; color: #73726c; margin-top: 3px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+  .dot-ok { background: #3B6D11; } .dot-loading { background: #BA7517; } .dot-error { background: #A32D2D; }
+  .btn { font-size: 13px; padding: 7px 16px; border-radius: 8px; border: 1px solid #d0cfc6; background: white; color: #1a1a18; cursor: pointer; font-weight: 500; }
+  .btn:hover { background: #f0efe8; }
+  .btn-primary { background: #185FA5; color: white; border-color: #185FA5; }
+  .btn-primary:hover { background: #0C447C; }
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1.5rem; }
+  .mcard { background: white; border-radius: 10px; padding: 1rem 1.25rem; border: 1px solid #e0dfd6; }
+  .mlabel { font-size: 11px; color: #73726c; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .mval { font-size: 28px; font-weight: 600; color: #1a1a18; line-height: 1; }
+  .msub { font-size: 11px; color: #a0a09a; margin-top: 4px; }
+  .card { background: white; border-radius: 10px; border: 1px solid #e0dfd6; padding: 1.25rem; margin-bottom: 1.25rem; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 8px; }
+  .section-title { font-size: 15px; font-weight: 600; color: #1a1a18; }
+  .tabs { display: flex; gap: 4px; }
+  .tab { font-size: 12px; padding: 5px 12px; border-radius: 6px; border: 1px solid #d0cfc6; background: white; color: #73726c; cursor: pointer; }
+  .tab.active { background: #E6F1FB; color: #185FA5; border-color: #85B7EB; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 1rem; }
+  .fbtn { font-size: 11px; padding: 4px 12px; border-radius: 5px; border: 1px solid #d0cfc6; background: white; color: #73726c; cursor: pointer; }
+  .fbtn.active { background: #E6F1FB; color: #185FA5; border-color: #85B7EB; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; font-weight: 600; color: #73726c; text-transform: uppercase; letter-spacing: 0.04em; padding: 0 10px 10px 0; border-bottom: 1px solid #e0dfd6; cursor: pointer; white-space: nowrap; }
+  th:not(:first-child) { text-align: right; }
+  th:hover { color: #1a1a18; }
+  td { padding: 10px 10px 10px 0; border-bottom: 1px solid #f0efe8; color: #1a1a18; vertical-align: middle; }
+  td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f8f8f4; }
+  .mono { font-family: 'Courier New', monospace; font-size: 12px; font-weight: 600; }
+  .pill { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 4px; margin-left: 6px; background: #f0efe8; color: #73726c; border: 1px solid #e0dfd6; }
+  .bar-wrap { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .bar-bg { width: 80px; height: 6px; background: #e0dfd6; border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; }
+  .chart-wrap { position: relative; width: 100%; height: 300px; }
+  .msg { text-align: center; padding: 3rem; color: #73726c; font-size: 14px; }
+  .err { color: #A32D2D; }
+  @media (max-width: 700px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="header-left">
+      <h1>Inspector Performance Dashboard</h1>
+      <p><span class="dot dot-loading" id="sdot"></span><span id="stxt">Loading data...</span></p>
+    </div>
+    <button class="btn" onclick="loadData()">Refresh</button>
+  </div>
+
+  <div class="metrics">
+    <div class="mcard"><div class="mlabel">30-day rolling</div><div class="mval" id="m1">—</div><div class="msub">Completed orders</div></div>
+    <div class="mcard"><div class="mlabel">Month to date</div><div class="mval" id="m2">—</div><div class="msub">This month</div></div>
+    <div class="mcard"><div class="mlabel">Last 7 days</div><div class="mval" id="m3">—</div><div class="msub">Completed orders</div></div>
+    <div class="mcard"><div class="mlabel">Open orders</div><div class="mval" id="m4">—</div><div class="msub" id="m4s">—</div></div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <div class="section-title">Inspector breakdown</div>
+      <div class="tabs">
+        <button class="tab active" onclick="setView('table',this)">Table</button>
+        <button class="tab" onclick="setView('chart',this)">Chart</button>
+      </div>
+    </div>
+    <div class="filters">
+      <button class="fbtn active" onclick="setFilter('ALL',this)">All states</button>
+      <button class="fbtn" onclick="setFilter('OH',this)">Ohio</button>
+      <button class="fbtn" onclick="setFilter('IN',this)">Indiana</button>
+      <button class="fbtn" onclick="setFilter('NC',this)">N. Carolina</button>
+      <button class="fbtn" onclick="setFilter('WV',this)">W. Virginia</button>
+      <button class="fbtn" onclick="setFilter('PA',this)">Pennsylvania</button>
+      <button class="fbtn" onclick="setFilter('IL',this)">Illinois</button>
+    </div>
+    <div id="tv"><div class="msg">Loading...</div></div>
+    <div id="cv" style="display:none"><div class="chart-wrap"><canvas id="myChart"></canvas></div></div>
+  </div>
+</div>
+
+<script>
+let allData=[],openRows=[],view='table',filter='ALL',sortK='r30',sortD=-1,chartInst=null;
+const STATES={OH:['OHASB06','OHASB21','OHASB00'],IN:['INASB11','INASB463','INASB465'],NC:['NCASB280'],WV:['WVASB06','WVASB02A','WVASB02','WVASB04','WVASB02B','WVASB000'],PA:['PAASB20','PAASB156','PAASB151'],IL:['ILASB01']};
+function getState(id){for(const[s,ids]of Object.entries(STATES)){if(ids.some(x=>x.toUpperCase()===id.toUpperCase()))return s;}const m=id.match(/^([A-Z]{2})/);return m?m[1]:'??';}
+function setStatus(msg,type){document.getElementById('stxt').textContent=msg;document.getElementById('sdot').className='dot dot-'+(type||'loading');}
+function parseDate(s){if(!s)return null;const p=s.toString().split('/');if(p.length===3){let y=parseInt(p[2]);if(y<100)y+=2000;return new Date(y,parseInt(p[0])-1,parseInt(p[1]));}return new Date(s);}
+
+async function loadData(){
+  setStatus('Loading data...','loading');
+  try{
+    const cr=await fetch('data/completed_orders.csv');
+    if(!cr.ok)throw new Error('Could not load completed_orders.csv');
+    const csv=await cr.text();
+    const xr=await fetch('data/open_orders.xlsx');
+    if(!xr.ok)throw new Error('Could not load open_orders.xlsx');
+    const xbuf=await xr.arrayBuffer();
+    process(csv,xbuf);
+    const d=new Date();
+    setStatus(`Updated ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} at ${d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`,'ok');
+  }catch(e){
+    setStatus(e.message,'error');
+    document.getElementById('tv').innerHTML=`<div class="msg err">${e.message}</div>`;
+  }
+}
+
+function process(csv,xbuf){
+  const rows=Papa.parse(csv,{header:true,skipEmptyLines:true}).data;
+  const now=new Date();
+  const d30=new Date(now-30*864e5),d7=new Date(now-7*864e5),mtd=new Date(now.getFullYear(),now.getMonth(),1);
+  rows.forEach(r=>r._d=parseDate(r.completiondate));
+  const wb=XLSX.read(xbuf,{type:'array'});
+  openRows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+  const keys=openRows.length?Object.keys(openRows[0]):[];
+  const dueCol=keys.find(k=>/due/i.test(k))||null;
+  const inspCol=keys.find(k=>/inspec/i.test(k))||null;
+  const map={};
+  rows.forEach(r=>{
+    const id=(r.performed||'').trim();
+    if(!id||id==='ASOFFICE-ISSUES')return;
+    if(!map[id])map[id]={id,state:getState(id),r30:0,mtd:0,r7:0,ontime:0,late:0};
+    if(r._d>=d30)map[id].r30++;
+    if(r._d>=mtd)map[id].mtd++;
+    if(r._d>=d7)map[id].r7++;
+  });
+  if(dueCol&&inspCol){
+    openRows.forEach(r=>{
+      const id=(r[inspCol]||'').toString().trim();
+      if(!id)return;
+      const due=parseDate((r[dueCol]||'').toString());
+      if(!due||!map[id])return;
+      if(due>=now)map[id].ontime++;else map[id].late++;
+    });
+  }
+  allData=Object.values(map);
+  document.getElementById('m1').textContent=rows.filter(r=>r._d>=d30).length.toLocaleString();
+  document.getElementById('m2').textContent=rows.filter(r=>r._d>=mtd).length.toLocaleString();
+  document.getElementById('m3').textContent=rows.filter(r=>r._d>=d7).length.toLocaleString();
+  document.getElementById('m4').textContent=openRows.length.toLocaleString();
+  const overdue=dueCol?openRows.filter(r=>{const d=parseDate((r[dueCol]||'').toString());return d&&d<now;}).length:0;
+  document.getElementById('m4s').textContent=overdue>0?`${overdue} overdue`:'All on track';
+  render();
+}
+
+function filtered(){return filter==='ALL'?allData:allData.filter(r=>r.state===filter);}
+function render(){if(view==='table')renderTable();else renderChart();}
+
+function renderTable(){
+  const data=filtered().slice().sort((a,b)=>sortD*((b[sortK]||0)-(a[sortK]||0)));
+  const max=Math.max(...data.map(r=>r.r30),1);
+  const rows=data.map(r=>{
+    const pct=Math.round(r.r30/max*100);
+    const tot=r.ontime+r.late;
+    const op=tot>0?Math.round(r.ontime/tot*100):null;
+    const bc=pct>66?'#3B6D11':pct>33?'#185FA5':'#854F0B';
+    const oc=op===null?null:op>=80?'#3B6D11':op>=60?'#854F0B':'#A32D2D';
+    return`<tr>
+      <td><span class="mono">${r.id}</span><span class="pill">${r.state}</span></td>
+      <td>${r.r7.toLocaleString()}</td>
+      <td>${r.mtd.toLocaleString()}</td>
+      <td><div class="bar-wrap"><div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${bc}"></div></div><span>${r.r30.toLocaleString()}</span></div></td>
+      <td>${op!==null?`<span style="color:${oc};font-weight:500">${op}%</span>`:'—'}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tv').innerHTML=`<table><thead><tr>
+    <th onclick="sort('id')">Inspector</th>
+    <th onclick="sort('r7')">7 days</th>
+    <th onclick="sort('mtd')">MTD</th>
+    <th onclick="sort('r30')">30 days</th>
+    <th onclick="sort('ontime')">On time</th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderChart(){
+  const data=filtered().slice().sort((a,b)=>b.r30-a.r30);
+  if(chartInst){chartInst.destroy();chartInst=null;}
+  chartInst=new Chart(document.getElementById('myChart'),{
+    type:'bar',
+    data:{labels:data.map(r=>r.id),datasets:[
+      {label:'30-day',data:data.map(r=>r.r30),backgroundColor:'#185FA5',borderRadius:3},
+      {label:'MTD',data:data.map(r=>r.mtd),backgroundColor:'#85B7EB',borderRadius:3},
+      {label:'7 days',data:data.map(r=>r.r7),backgroundColor:'#B5D4F4',borderRadius:3},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,labels:{font:{size:12},boxWidth:10}}},scales:{x:{ticks:{font:{size:11},maxRotation:45,autoSkip:false}},y:{ticks:{font:{size:11}}}}}
+  });
+}
+
+function setView(v,btn){
+  view=v;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tv').style.display=v==='table'?'':'none';
+  document.getElementById('cv').style.display=v==='chart'?'':'none';
+  render();
+}
+function setFilter(f,btn){filter=f;document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');render();}
+function sort(k){if(sortK===k)sortD*=-1;else{sortK=k;sortD=-1;}renderTable();}
+
+loadData();
+</script>
+</body>
+</html>
